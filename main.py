@@ -2,7 +2,6 @@ import asyncio
 import logging
 import sys
 import sqlite3
-from os import getenv
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -19,8 +18,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from gpt import calculate_manacost
 
+from env import Settings
 
-TOKEN = getenv('TOKEN')
+
+TOKEN = Settings().TOKEN
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 
