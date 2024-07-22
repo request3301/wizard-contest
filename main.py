@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import sys
-import sqlite3
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -18,44 +17,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from gpt import calculate_manacost
 
-from env import Settings
+from settings import Settings
+
+from database.models import User, Wizard, SkillData
+from database.queries import obj_info, delete_obj, checkin_user, get_wizards, add_wizard
+from database.queries import get_skills, add_skill
+from database.queries import set_wizard_param
 
 
 TOKEN = Settings().TOKEN
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-
-
-connection = sqlite3.connect("wizard-battle.db")
-cursor = connection.cursor()
-
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS Users (
-id INTEGER PRIMARY KEY,
-wizard INTEGER
-)
-''')
-
-# wizards (as well as skills) are stored in a forward list. "next" points to next wizard.
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS Wizards (
-id INTEGER PRIMARY KEY,
-next INTEGER,
-name TEXT NOT NULL,
-speed INTEGER,
-power INTEGER,
-skill INTEGER
-)
-''')
-
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS Skills (
-id INTEGER PRIMARY KEY,
-next INTEGER,
-name TEXT NOT NULL,
-description TEXT,
-manacost INTEGER
-)
-''')
 
 speednames = {
     1: "Human",
@@ -74,103 +45,10 @@ powernames = {
 }
 
 
-def get_wizards(user: int):
-    wizards = []
-    cursor.execute('SELECT wizard FROM Users WHERE id = ?', (user,))
-    result = cursor.fetchone()[0]
-    while result is not None:
-        wizards.append(result)
-        cursor.execute('SELECT next FROM Wizards WHERE id = ?', (result,))
-        result = cursor.fetchone()[0]
-    return wizards
-
-
-def delete_wizard(wizard: int):
-    cursor.execute('SELECT next FROM Wizards WHERE id = ?', (wizard,))
-    nxt = cursor.fetchone()[0]
-    cursor.execute('SELECT id FROM Users WHERE wizard = ?', (wizard,))
-    if cursor.fetchone() is None:
-        cursor.execute('UPDATE Wizards SET next = ? WHERE next = ?', (nxt, wizard))
-    else:
-        cursor.execute('UPDATE Users SET wizard = ? WHERE wizard = ?', (nxt, wizard))
-    cursor.execute('DELETE FROM Wizards WHERE id = ?', (wizard,))
-
-
-def get_last_wizard(user: int):
-    wizards = get_wizards(user)
-    if not wizards:
-        return -1
-    return wizards[-1]
-
-
-def add_wizard(user: int, name: str):
-    last = get_last_wizard(user)
-    cursor.execute('INSERT INTO Wizards (name, speed, power) VALUES (?, 1, 1)', (name,))
-    cursor.execute('SELECT last_insert_rowid()')
-    wizard = cursor.fetchone()[0]
-    if last == -1:
-        cursor.execute('UPDATE Users SET wizard = ? WHERE id = ?', (wizard, user,))
-    else:
-        cursor.execute('UPDATE Wizards SET next = ? WHERE id = ?', (wizard, last,))
-    return wizard
-
-
-def get_skills(wizard: int):
-    skills = []
-    cursor.execute('SELECT skill FROM Wizards WHERE id = ?', (wizard,))
-    skill = cursor.fetchone()[0]
-    while skill is not None:
-        skills.append(skill)
-        cursor.execute('SELECT next FROM Skills WHERE id = ?', (skill,))
-        skill = cursor.fetchone()[0]
-    return skills
-
-
-def get_skills_names(wizard: int):
-    skills = get_skills(wizard)
-    names = []
-    for skill in skills:
-        cursor.execute('SELECT name FROM Skills WHERE id = ?', (skill,))
-        names.append(str(cursor.fetchone()[0]))
-    return names
-
-
-def delete_skill(wizard: int, skill: int):
-    cursor.execute('SELECT next FROM Skills WHERE id = ?', (skill,))
-    nxt = cursor.fetchone()[0]
-    cursor.execute('SELECT skill FROM Wizards WHERE id = ?', (wizard,))
-    if skill == cursor.fetchone()[0]:
-        cursor.execute('UPDATE Wizards SET skill = ? WHERE id = ?', (nxt, wizard))
-    else:
-        cursor.execute('UPDATE Skills SET next = ? WHERE next = ?', (nxt, skill))
-    cursor.execute('DELETE FROM Skills WHERE id = ?', (skill,))
-
-
-def get_last_skill(wizard: int):
-    skills = get_skills(wizard)
-    if not skills:
-        return -1
-    return skills[-1]
-
-
-def add_skill(wizard: int, name: str, description: str, manacost: int):
-    last = get_last_skill(wizard)
-    cursor.execute('INSERT INTO Skills (name, description, manacost) VALUES (?, ?, ?)',
-                   (name, description, manacost))
-    cursor.execute('SELECT last_insert_rowid()')
-    skill = cursor.fetchone()[0]
-    if last == -1:
-        cursor.execute('UPDATE Wizards SET skill = ? WHERE id = ?', (skill, wizard,))
-    else:
-        cursor.execute('UPDATE Skills SET next = ? WHERE id = ?', (skill, last,))
-
-
-def get_manapool(wizards: int):
-    skills = get_skills(wizards)
+def get_manapool(skills: list[SkillData]):
     manapool = 0
     for skill in skills:
-        cursor.execute('SELECT manacost FROM Skills WHERE id = ?', (skill,))
-        manapool += cursor.fetchone()[0]
+        manapool += skill.manacost
     return manapool
 
 
@@ -188,17 +66,14 @@ class WizardsListScene(Scene, state="list"):
     """
 
     class Callback(CallbackData, prefix="list"):
-        wizard: int = 0
+        wizard_id: int = 0
         new: bool = False
 
     async def show_list(self, chat_id: int) -> Any:
-        wizards = get_wizards(chat_id)
-        # print(wizards)
+        wizards = await get_wizards(user_id=chat_id)
         builder = InlineKeyboardBuilder()
         for wizard in wizards:
-            cursor.execute('SELECT name FROM Wizards WHERE id = ?', (wizard,))
-            name = cursor.fetchone()[0]
-            builder.button(text=name, callback_data=self.Callback(wizard=wizard).pack())
+            builder.button(text=wizard.name, callback_data=self.Callback(wizard_id=wizard.id).pack())
         builder.button(text="🆕 New wizard", callback_data=self.Callback(new=True).pack())
         builder.button(text="🔙 Back", callback_data=FunctionalCallback(back=True).pack())
         builder.adjust(1, True)
@@ -217,9 +92,9 @@ class WizardsListScene(Scene, state="list"):
     async def create_wizard(self, query: CallbackQuery) -> None:
         await self.wizard.goto(scene=NewWizardScene)
 
-    @on.callback_query(Callback.filter(F.wizard))
+    @on.callback_query(Callback.filter(F.wizard_id))
     async def edit_wizard(self, query: CallbackQuery, callback_data: Callback) -> None:
-        await self.wizard.goto(scene=EditWizardScene, wizard=callback_data.wizard)
+        await self.wizard.goto(scene=EditWizardScene, wizard_id=callback_data.wizard_id)
 
     @on.callback_query(FunctionalCallback.filter(F.back))
     async def exit(self, query: CallbackQuery) -> None:
@@ -229,7 +104,7 @@ class WizardsListScene(Scene, state="list"):
 
 class NewWizardScene(Scene, state="new"):
     @on.callback_query.enter()
-    async def on_enter(self, query: CallbackQuery) -> Any:
+    async def on_enter(self, query: CallbackQuery):
         builder = InlineKeyboardBuilder()
         builder.button(text="🚫 Cancel", callback_data=FunctionalCallback(back=True))
         await bot(SendMessage(chat_id=query.from_user.id,
@@ -237,75 +112,73 @@ class NewWizardScene(Scene, state="new"):
 
     @on.message()
     async def set_name(self, message: Message):
-        wizard = add_wizard(message.chat.id, message.text)
-        await self.wizard.goto(scene=EditWizardScene, wizard=wizard)
+        wizard_id = await add_wizard(user_id=message.chat.id, name=message.text)
+        await self.wizard.goto(scene=EditWizardScene, wizard_id=wizard_id)
 
     @on.callback_query(FunctionalCallback.filter(F.back))
-    async def exit(self, query: CallbackQuery) -> None:
+    async def exit(self, query: CallbackQuery):
         await self.wizard.goto(scene=WizardsListScene)
 
 
 class EditWizardScene(Scene, state="edit_wizard"):
-
     class Callback(CallbackData, prefix="editw"):
-        wizard: int
-        skill: int = 0
+        wizard_id: int
+        skill_id: int = 0
         new_skill: bool = False
         speed: bool = False
         power: bool = False
         delete_wizard: bool = False
 
-    async def show_info(self, chat_id: int, wizard: int) -> Any:
-        cursor.execute('SELECT name, speed, power FROM Wizards WHERE id = ?', (wizard,))
-        [name, speed, power] = cursor.fetchone()
-        skills = get_skills(wizard)
-        skills_names = get_skills_names(wizard)
-        rating = get_manapool(wizard) * speed * power
+    async def show_info(self, chat_id: int, wizard_id: int) -> Any:
+        wizard = await obj_info(obj_type='wizard', obj_id=wizard_id)
+        skills = await get_skills(wizard_id=wizard_id)
+        rating = get_manapool(skills) * wizard.speed * wizard.power
 
         builder = InlineKeyboardBuilder()
-        builder.button(text="⚡️ "+speednames[speed],
-                       callback_data=self.Callback(wizard=wizard, speed=True).pack())
-        builder.button(text="💪 "+powernames[power],
-                       callback_data=self.Callback(wizard=wizard, power=True).pack())
-        for [skill, sname] in zip(skills, skills_names):
-            builder.button(text=sname, callback_data=self.Callback(wizard=wizard, skill=skill).pack())
+        builder.button(text="⚡️ " + speednames[wizard.speed],
+                       callback_data=self.Callback(wizard_id=wizard_id, speed=True).pack())
+        builder.button(text="💪 " + powernames[wizard.power],
+                       callback_data=self.Callback(wizard_id=wizard_id, power=True).pack())
+
+        for skill in skills:
+            builder.button(text=skill.name, callback_data=self.Callback(wizard_id=wizard_id, skill_id=skill.id).pack())
         builder.button(text="🆕 New skill",
-                       callback_data=self.Callback(wizard=wizard, new_skill=True).pack())
+                       callback_data=self.Callback(wizard_id=wizard_id, new_skill=True).pack())
         builder.button(text="💀 Delete wizard",
-                       callback_data=self.Callback(wizard=wizard, delete_wizard=True).pack())
+                       callback_data=self.Callback(wizard_id=wizard_id, delete_wizard=True).pack())
         builder.button(text="🔙 Back",
-                       callback_data=FunctionalCallback(wizard=wizard, back=True).pack())
+                       callback_data=FunctionalCallback(wizard_id=wizard_id, back=True).pack())
         builder.adjust(1, True)
-        await bot(SendMessage(chat_id=chat_id, text="<b>"+str(name)+"</b>\nRank: "+str(rating),
+        await bot(SendMessage(chat_id=chat_id, text="<b>" + str(wizard.name) + "</b>\nRank: " + str(rating),
                               reply_markup=builder.as_markup()))
 
     @on.message.enter()
-    async def on_enter_msg(self, message: Message, wizard: int) -> Any:
-        await self.show_info(message.chat.id, wizard)
+    async def on_enter_msg(self, message: Message, wizard_id: int) -> Any:
+        await self.show_info(chat_id=message.chat.id, wizard_id=wizard_id)
 
     @on.callback_query.enter()
-    async def on_enter_cb(self, query: CallbackQuery, wizard: int) -> Any:
-        await self.show_info(query.from_user.id, wizard)
+    async def on_enter_cb(self, query: CallbackQuery, wizard_id: int) -> Any:
+        await self.show_info(query.from_user.id, wizard_id)
 
-    @on.callback_query(Callback.filter(F.skill))
+    @on.callback_query(Callback.filter(F.skill_id))
     async def edit_skill(self, query: CallbackQuery, callback_data: Callback) -> None:
-        await self.wizard.goto(scene=SkillScene, wizard=callback_data.wizard, skill=callback_data.skill)
+        await self.wizard.goto(scene=SkillScene, wizard_id=callback_data.wizard_id, skill_id=callback_data.skill_id)
 
     @on.callback_query(Callback.filter(F.new_skill))
     async def new_skill(self, query: CallbackQuery, callback_data: Callback) -> None:
-        await self.wizard.goto(scene=NewSkillScene, wizard=callback_data.wizard)
+        await self.wizard.goto(scene=NewSkillScene, wizard_id=callback_data.wizard_id)
 
     @on.callback_query(Callback.filter(F.speed))
     async def change_speed(self, query: CallbackQuery, callback_data: Callback) -> None:
-        await self.wizard.goto(scene=ChooseSpeedScene, wizard=callback_data.wizard)
+        await self.wizard.goto(scene=ChooseSpeedScene, wizard_id=callback_data.wizard_id)
 
     @on.callback_query(Callback.filter(F.power))
     async def change_power(self, query: CallbackQuery, callback_data: Callback) -> None:
-        await self.wizard.goto(scene=ChoosePowerScene, wizard=callback_data.wizard)
+        await self.wizard.goto(scene=ChoosePowerScene, wizard_id=callback_data.wizard_id)
 
     @on.callback_query(Callback.filter(F.delete_wizard))
     async def delete_wizard(self, query: CallbackQuery, callback_data: Callback) -> None:
-        delete_wizard(callback_data.wizard)
+        await delete_obj(obj_type="wizard", obj_id=callback_data.wizard_id)
         await self.wizard.goto(scene=WizardsListScene)
 
     @on.callback_query(FunctionalCallback.filter(F.back))
@@ -314,64 +187,61 @@ class EditWizardScene(Scene, state="edit_wizard"):
 
 
 class ChooseSpeedScene(Scene, state="speed"):
-
     class Callback(CallbackData, prefix="speed"):
-        wizard: int
+        wizard_id: int
         speed: int
 
     @on.callback_query.enter()
-    async def on_enter(self, query: CallbackQuery, wizard: int) -> Any:
+    async def on_enter(self, query: CallbackQuery, wizard_id: int) -> Any:
         builder = InlineKeyboardBuilder()
-        for speed, speedname in speednames.items():
-            builder.button(text=speedname+" ("+str(speed)+")",
-                           callback_data=self.Callback(wizard=wizard, speed=speed).pack())
+        for speed, speed_name in speednames.items():
+            builder.button(text=speed_name + " (" + str(speed) + ")",
+                           callback_data=self.Callback(wizard_id=wizard_id, speed=speed).pack())
         builder.adjust(1, True)
         await bot(SendMessage(chat_id=query.from_user.id, text="Select wizard's speed",
                               reply_markup=builder.as_markup()))
 
     @on.callback_query(Callback.filter(F.speed))
     async def set_speed(self, query: CallbackQuery, callback_data: Callback) -> None:
-        cursor.execute('UPDATE Wizards SET speed = ? WHERE id = ?',
-                       (callback_data.speed, callback_data.wizard))
-        await self.wizard.goto(scene=EditWizardScene, wizard=callback_data.wizard)
+        await set_wizard_param(wizard_id=callback_data.wizard_id, param='speed', value=callback_data.speed)
+        await self.wizard.goto(scene=EditWizardScene, wizard_id=callback_data.wizard_id)
 
 
 class ChoosePowerScene(Scene, state="power"):
-
     class Callback(CallbackData, prefix="power"):
-        wizard: int
+        wizard_id: int
         power: int
 
     @on.callback_query.enter()
-    async def on_enter(self, query: CallbackQuery, wizard: int) -> Any:
+    async def on_enter(self, query: CallbackQuery, wizard_id: int) -> Any:
         builder = InlineKeyboardBuilder()
         for power, powername in powernames.items():
-            builder.button(text=powername+" ("+str(power)+")",
-                           callback_data=self.Callback(wizard=wizard, power=power).pack())
+            builder.button(text=powername + " (" + str(power) + ")",
+                           callback_data=self.Callback(wizard_id=wizard_id, power=power).pack())
         builder.adjust(1, True)
         await bot(SendMessage(chat_id=query.from_user.id, text="Select wizard's power",
                               reply_markup=builder.as_markup()))
 
     @on.callback_query(Callback.filter(F.power))
     async def set_power(self, query: CallbackQuery, callback_data: Callback) -> None:
-        cursor.execute('UPDATE Wizards SET power = ? WHERE id = ?',
-                       (callback_data.power, callback_data.wizard))
-        await self.wizard.goto(scene=EditWizardScene, wizard=callback_data.wizard)
+        await set_wizard_param(wizard_id=callback_data.wizard_id, param='power', value=callback_data.power)
+        await self.wizard.goto(scene=EditWizardScene, wizard_id=callback_data.wizard_id)
 
 
+# todo make separate scenes: NewSkillScene, SkillDescriptionScene
 class NewSkillScene(Scene, state="new_skill"):
     @on.callback_query.enter()
-    async def on_enter(self, query: CallbackQuery, state: FSMContext, wizard: int) -> Any:
+    async def on_enter(self, query: CallbackQuery, state: FSMContext, wizard_id: int) -> Any:
         builder = InlineKeyboardBuilder()
         builder.button(text="🚫 Cancel", callback_data=FunctionalCallback(back=True))
-        await state.update_data(wizard=wizard, name_request=True)
+        await state.update_data(wizard_id=wizard_id, name_request=True)
         await bot(SendMessage(chat_id=query.from_user.id,
                               text="Enter skill's name.", reply_markup=builder.as_markup()))
 
     @on.message()
     async def on_message(self, message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        wizard = data['wizard']
+        wizard_id = data['wizard_id']
         name_request = data['name_request']
         if name_request:
             await state.update_data(name=message.text)
@@ -385,57 +255,56 @@ class NewSkillScene(Scene, state="new_skill"):
             # todo merge coroutines
             await message.answer(text="Calculating power of the skill...")
             manacost = await calculate_manacost(description)
-            await message.answer(text="Power: "+str(manacost))
-            add_skill(wizard, name, description, manacost)
+            await message.answer(text="Power: " + str(manacost))
+            await add_skill(wizard_id, name, description, manacost)
 
             await state.set_data({})
-            await self.wizard.goto(scene=EditWizardScene, wizard=wizard)
+            await self.wizard.goto(scene=EditWizardScene, wizard_id=wizard_id)
 
     @on.callback_query(FunctionalCallback.filter(F.back))
     async def exit(self, query: CallbackQuery, state: FSMContext) -> None:
         data = await state.get_data()
-        wizard = data['wizard']
+        wizard_id = data['wizard_id']
         await state.set_data({})
-        await self.wizard.goto(scene=EditWizardScene, wizard=wizard)
+        await self.wizard.goto(scene=EditWizardScene, wizard_id=wizard_id)
 
 
 class SkillScene(Scene, state="skill"):
-
     class Callback(CallbackData, prefix="skill"):
         delete: bool = False
 
     @on.callback_query.enter()
-    async def on_enter(self, query: CallbackQuery, state: FSMContext, skill: int, wizard: int) -> None:
-        cursor.execute('SELECT name, description, manacost FROM Skills WHERE id = ?', (skill,))
-        [name, description, manacost] = cursor.fetchone()
+    async def on_enter(self, query: CallbackQuery, state: FSMContext, skill_id: int, wizard_id: int) -> None:
+        skill = await obj_info(obj_type='skill', obj_id=skill_id)
 
-        await state.update_data(wizard=wizard, skill=skill)
+        await state.update_data(wizard_id=wizard_id, skill_id=skill.id)
 
         builder = InlineKeyboardBuilder()
         builder.button(text="🔙 Back", callback_data=FunctionalCallback(back=True))
         builder.button(text="🗑 Delete skill", callback_data=self.Callback(delete=True))
         builder.adjust(1, True)
 
-        await bot(SendMessage(chat_id=query.from_user.id, text=name+"\n\n"+description+"\n\n"+str(manacost),
+        await bot(SendMessage(chat_id=query.from_user.id,
+                              text=skill.name + "\n\n" + skill.description + "\n\n" + str(skill.manacost),
                               reply_markup=builder.as_markup()))
 
     @on.callback_query(Callback.filter(F.delete))
     async def delete(self, query: CallbackQuery, state: FSMContext) -> None:
         data = await state.get_data()
-        skill = data['skill']
-        wizard = data['wizard']
-        delete_skill(skill=skill, wizard=wizard)
+        skill_id = data['skill_id']
+        wizard_id = data['wizard_id']
+        await delete_obj(obj_type="skill", obj_id=skill_id)
 
         await state.set_data({})
-        await self.wizard.goto(scene=EditWizardScene, wizard=wizard)
+        await self.wizard.goto(scene=EditWizardScene, wizard_id=wizard_id)
 
     @on.callback_query(FunctionalCallback.filter(F.back))
     async def exit(self, query: CallbackQuery, state: FSMContext) -> None:
         data = await state.get_data()
-        wizard = data['wizard']
+        wizard_id = data['wizard_id']
 
         await state.set_data({})
-        await self.wizard.goto(scene=EditWizardScene, wizard=wizard)
+        await self.wizard.goto(scene=EditWizardScene, wizard_id=wizard_id)
 
 
 router = Router(name=__name__)
@@ -445,9 +314,7 @@ router.message.register(WizardsListScene.as_handler(), Command("wizards"))
 @router.message(CommandStart())
 async def command_start(message: Message, scenes: ScenesManager) -> None:
     await scenes.close()
-    cursor.execute('SELECT * FROM Users WHERE id = ?', (message.from_user.id,))
-    if cursor.fetchone() is None:
-        cursor.execute('INSERT INTO Users (id) VALUES (?)', (message.chat.id,))
+    await checkin_user(user_id=message.chat.id)
     await greetings(message.chat.id)
 
 
@@ -480,6 +347,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        connection.commit()
-        connection.close()
         print("Shutting down")
