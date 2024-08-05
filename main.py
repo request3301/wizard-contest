@@ -3,30 +3,23 @@ import logging
 import sys
 from typing import Any
 
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.scene import Scene, on, SceneRegistry, ScenesManager
 from aiogram.fsm.storage.memory import SimpleEventIsolation
-from aiogram.types import Message, CallbackQuery
 from aiogram.methods import SendMessage
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from gpt import calculate_manacost
-
-from settings import Settings
-
-from database.models import User, Wizard, SkillData
-from database.queries import obj_info, delete_obj, checkin_user, get_wizards, add_wizard
 from database.queries import get_skills, add_skill
+from database.queries import obj_info, delete_obj, checkin_user, get_wizards, add_wizard, calc_rating
 from database.queries import set_wizard_param
-
-
-TOKEN = Settings().TOKEN
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+from gpt import calculate_manacost
+from matchmaking.match import MatchScene
+from matchmaking.queue import QueueScene, coordinator, SelectWizardScene
+from tools import FunctionalCallback, bot, greetings
 
 speednames = {
     1: "Human",
@@ -43,21 +36,6 @@ powernames = {
     4: "Titan",
     5: "God"
 }
-
-
-def get_manapool(skills: list[SkillData]):
-    manapool = 0
-    for skill in skills:
-        manapool += skill.manacost
-    return manapool
-
-
-async def greetings(chat_id: int) -> None:
-    await bot(SendMessage(chat_id=chat_id, text="Hewo :3"))
-
-
-class FunctionalCallback(CallbackData, prefix="func"):
-    back: bool
 
 
 class WizardsListScene(Scene, state="list"):
@@ -129,10 +107,13 @@ class EditWizardScene(Scene, state="edit_wizard"):
         power: bool = False
         delete_wizard: bool = False
 
-    async def show_info(self, chat_id: int, wizard_id: int) -> Any:
-        wizard = await obj_info(obj_type='wizard', obj_id=wizard_id)
-        skills = await get_skills(wizard_id=wizard_id)
-        rating = get_manapool(skills) * wizard.speed * wizard.power
+    async def show_info(self, chat_id: int, wizard_id: int):
+        tasks = [
+            asyncio.create_task(obj_info(obj_type='wizard', obj_id=wizard_id)),
+            asyncio.create_task(get_skills(wizard_id=wizard_id)),
+        ]
+        [wizard, skills] = await asyncio.gather(*tasks)
+        rating = calc_rating(wizard, skills)
 
         builder = InlineKeyboardBuilder()
         builder.button(text="⚡️ " + speednames[wizard.speed],
@@ -153,11 +134,11 @@ class EditWizardScene(Scene, state="edit_wizard"):
                               reply_markup=builder.as_markup()))
 
     @on.message.enter()
-    async def on_enter_msg(self, message: Message, wizard_id: int) -> Any:
+    async def on_enter_msg(self, message: Message, wizard_id: int):
         await self.show_info(chat_id=message.chat.id, wizard_id=wizard_id)
 
     @on.callback_query.enter()
-    async def on_enter_cb(self, query: CallbackQuery, wizard_id: int) -> Any:
+    async def on_enter_cb(self, query: CallbackQuery, wizard_id: int):
         await self.show_info(query.from_user.id, wizard_id)
 
     @on.callback_query(Callback.filter(F.skill_id))
@@ -309,10 +290,11 @@ class SkillScene(Scene, state="skill"):
 
 router = Router(name=__name__)
 router.message.register(WizardsListScene.as_handler(), Command("wizards"))
+router.message.register(SelectWizardScene.as_handler(), Command("contest"))
 
 
 @router.message(CommandStart())
-async def command_start(message: Message, scenes: ScenesManager) -> None:
+async def command_start(message: Message, scenes: ScenesManager):
     await scenes.close()
     await checkin_user(user_id=message.chat.id)
     await greetings(message.chat.id)
@@ -326,20 +308,21 @@ def create_dispatcher():
 
     scene_registry = SceneRegistry(dispatcher)
 
-    scene_registry.add(WizardsListScene)
-    scene_registry.add(NewWizardScene)
-    scene_registry.add(EditWizardScene)
-    scene_registry.add(ChooseSpeedScene)
-    scene_registry.add(ChoosePowerScene)
-    scene_registry.add(NewSkillScene)
-    scene_registry.add(SkillScene)
+    scene_registry.add(WizardsListScene, NewWizardScene,
+                       EditWizardScene, ChooseSpeedScene, ChoosePowerScene,
+                       NewSkillScene, SkillScene,
+                       SelectWizardScene, QueueScene, MatchScene)
 
     return dispatcher
 
 
 async def main() -> None:
     dp = create_dispatcher()
-    await dp.start_polling(bot)
+    tasks = [
+        dp.start_polling(bot),
+        coordinator.start_polling()
+    ]
+    await asyncio.gather(*tasks)
 
 
 if __name__ == '__main__':

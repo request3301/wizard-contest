@@ -1,9 +1,9 @@
-from sqlalchemy import ForeignKey
+from typing import List, Annotated
+
+from pydantic import BaseModel
+from sqlalchemy import ForeignKey, BigInteger
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from typing import List, Annotated
-from pydantic import BaseModel
-
 
 intpk = Annotated[int, mapped_column(primary_key=True)]
 
@@ -15,7 +15,7 @@ class Base(AsyncAttrs, DeclarativeBase):
 class User(Base):
     __tablename__ = 'user'
 
-    id: Mapped[intpk]
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
 
     wizards: Mapped[List["Wizard"]] = relationship(
         back_populates='user', cascade='all, delete-orphan'
@@ -69,5 +69,3 @@ class SkillData(BaseModel):
     name: str
     description: str
     manacost: int
-
-

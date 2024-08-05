@@ -1,17 +1,14 @@
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from database.models import *
 from settings import Settings
 
-
 DATABASE_URL = Settings().DATABASE_URL
-
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
 session_factory = async_sessionmaker(engine)
-
 
 type_to_class = {
     "wizard": Wizard,
@@ -46,7 +43,7 @@ async def delete_obj(obj_type: str, obj_id: int):
 
 async def get_wizards(user_id: int) -> list[WizardData]:
     async with session_factory() as session:
-        query = (select(Wizard))
+        query = (select(Wizard).filter_by(user_id=user_id))
         res = await session.execute(query)
         result_orm = res.scalars().all()
         result_data = [WizardData.model_validate(row, from_attributes=True) for row in result_orm]
@@ -95,3 +92,26 @@ async def checkin_user(user_id: int) -> None:
             new_user = User(id=user_id)
             session.add(new_user)
             await session.commit()
+
+
+def calc_manapool(skills: list[SkillData]) -> int:
+    manapool = 0
+    for skill in skills:
+        manapool += skill.manacost
+    return manapool
+
+
+async def get_manapool(wizard_id: int) -> int:
+    skills = await get_skills(wizard_id)
+    return calc_manapool(skills)
+
+
+def calc_rating(wizard: WizardData, skills: list[SkillData]) -> int:
+    manapool = calc_manapool(skills)
+    return manapool * wizard.speed * wizard.power
+
+
+async def get_rating(wizard_id: int) -> int:
+    wizard = await obj_info(obj_type='wizard', obj_id=wizard_id)
+    skills = await get_skills(wizard_id)
+    return calc_rating(wizard, skills)
