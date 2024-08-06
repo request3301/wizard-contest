@@ -16,7 +16,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.queries import get_skills, add_skill
 from database.queries import obj_info, delete_obj, checkin_user, get_wizards, add_wizard, calc_rating
 from database.queries import set_wizard_param
-from gpt import calculate_manacost
+from llm import calculate_manacost
 from matchmaking.match import MatchScene
 from matchmaking.queue import QueueScene, coordinator, SelectWizardScene
 from tools import FunctionalCallback, bot, greetings
@@ -236,10 +236,12 @@ class NewSkillScene(Scene, state="new_skill"):
             # todo merge coroutines
             await message.answer(text="Calculating power of the skill...")
             manacost = await calculate_manacost(description)
-            await message.answer(text="Power: " + str(manacost))
-            await add_skill(wizard_id, name, description, manacost)
-
-            await state.set_data({})
+            if manacost == -1:
+                await message.answer(text="Something went wrong... Please try again.")
+            else:
+                await message.answer(text="Power: " + str(manacost))
+                await add_skill(wizard_id, name, description, manacost)
+                await state.set_data({})
             await self.wizard.goto(scene=EditWizardScene, wizard_id=wizard_id)
 
     @on.callback_query(FunctionalCallback.filter(F.back))

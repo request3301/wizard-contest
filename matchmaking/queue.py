@@ -38,13 +38,11 @@ class Coordinator:
         await bot.edit_message_text(chat_id=user_id, message_id=self.queue[user_id]['msg_id'],
                                     text=f"{on_match_message}\n\n🚫 Abandoned")
         del self.queue[user_id]
-        # await remove_markup(chat_id=user_id, message_id=self.queue[user_id]['msg_id'])
 
     async def accept(self, user_id: int):
         self.queue[user_id]['status'] = 'accepted'
         await bot.edit_message_text(chat_id=user_id, message_id=self.queue[user_id]['msg_id'],
                                     text=f"{on_match_message}\n\n✅ Accepted")
-        # await remove_markup(chat_id=user_id, message_id=self.queue[user_id]['msg_id'])
 
     async def start_polling(self):
         while True:
@@ -137,8 +135,8 @@ class QueueScene(Scene, state="queue"):
 
     @on.callback_query(QueueCallback.filter())
     async def accept(self, query: CallbackQuery, state: FSMContext):
-        status = coordinator.get_status(user_id=query.from_user.id)
         print(f"accept from {query.from_user.id}")
+        status = coordinator.get_status(user_id=query.from_user.id)
         await coordinator.accept(user_id=query.from_user.id)
         while status != "established":
             if status == "abandoned":
