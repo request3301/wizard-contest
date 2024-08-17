@@ -16,7 +16,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.queries import get_skills, add_skill
 from database.queries import obj_info, delete_obj, checkin_user, get_wizards, add_wizard, calc_rating
 from database.queries import set_wizard_param
-from llm import calculate_manacost
+from llm.engine import calculate_manacost
 from matchmaking.match import MatchScene
 from matchmaking.queue import QueueScene, coordinator, SelectWizardScene
 from tools import FunctionalCallback, bot, greetings

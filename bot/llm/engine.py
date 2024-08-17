@@ -1,5 +1,7 @@
 from groq import AsyncGroq
 
+from database.models import WizardData
+from llm.prompts import start_contest_prompt, pick_winner_prompt
 from settings import Settings
 
 client = AsyncGroq(api_key=Settings().GROQ_API_KEY)
@@ -33,3 +35,46 @@ async def calculate_manacost(description: str):
     )
     return int(response.choices[0].message.content)
     # return 5
+
+
+def start_contest(wizards: list[WizardData]):
+    messages = [{
+        'role': "system",
+        'content': start_contest_prompt(wizards=wizards)
+    }]
+    return messages
+
+
+async def generate_action(messages, wizard_name: str, skill_name: str, description: str):
+    messages.append({
+        'role': "user",
+        'content': f"{wizard_name} uses {skill_name}. It's description: {description}",
+    })
+    print(f"{wizard_name} uses {skill_name}. It's description: {description}")
+    response = await client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=messages,
+    )
+    resp = response.choices[0].message.content
+    messages.append({
+        "role": "assistant",
+        "content": resp,
+    })
+    return resp
+
+
+async def pick_winner(messages, wizards: list[WizardData]) -> int:
+    """
+    :return: 0 and 1 mean that wizard 0 or wizard 1 wins correspondingly. 2 means that it's a tie.
+    """
+    messages.append({
+        "role": "user",
+        "content": pick_winner_prompt(wizards=wizards)
+
+    })
+    response = await client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=messages,
+    )
+    resp = response.choices[0].message.content
+    return int(resp)

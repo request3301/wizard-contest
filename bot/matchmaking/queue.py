@@ -32,6 +32,7 @@ class Coordinator:
             'wizard_id': wizard_id,
             'status': "in_queue",
             'msg_id': msg_id,
+            "director": None
         }
 
     async def abandon(self, user_id: int):
@@ -55,10 +56,12 @@ class Coordinator:
                     continue
                 match_established = await self.notify(opp, user_id)
                 if match_established:
-                    await create_director([opp, user_id],
-                                          [self.queue[opp]['wizard_id'], self.queue[user_id]['wizard_id']])
-                    self.queue[opp]['status'] = "established"
-                    self.queue[user_id]['status'] = "established"
+                    director = await create_director([opp, user_id],
+                                                     [self.queue[opp]['wizard_id'], self.queue[user_id]['wizard_id']])
+                    for i in [opp, user_id]:
+                        self.queue[i]['status'] = "established"
+                        self.queue[i]['director'] = director
+                    await director.run()
                 opp = 0
 
             await asyncio.sleep(1)
@@ -84,6 +87,9 @@ class Coordinator:
             if self.queue[user_id_1]['status'] == 'accepted' and self.queue[user_id_2]['status'] == 'accepted':
                 return True
             await asyncio.sleep(1)
+
+    def get_director(self, user_id: int):
+        return self.queue[user_id]['director']
 
     def get_status(self, user_id: int):
         return self.queue[user_id]['status']
@@ -135,19 +141,24 @@ class QueueScene(Scene, state="queue"):
 
     @on.callback_query(QueueCallback.filter())
     async def accept(self, query: CallbackQuery, state: FSMContext):
-        print(f"accept from {query.from_user.id}")
-        status = coordinator.get_status(user_id=query.from_user.id)
-        await coordinator.accept(user_id=query.from_user.id)
+        user_id = query.from_user.id
+        print(f"accept from {user_id}")
+
+        status = coordinator.get_status(user_id=user_id)
+        await coordinator.accept(user_id=user_id)
         while status != "established":
             if status == "abandoned":
-                await bot.send_message(chat_id=query.from_user.id, text="Failed")
+                await bot.send_message(chat_id=user_id, text="Failed")
                 data = await state.get_data()
                 wizard_id = data['wizard_id']
                 await self.wizard.retake(wizard_id=wizard_id)
                 return
             await asyncio.sleep(1)
-            status = coordinator.get_status(user_id=query.from_user.id)
-        await self.wizard.goto(scene=MatchScene)
+            status = coordinator.get_status(user_id=user_id)
+
+        print(f"preparing the match...")
+        director = coordinator.get_director(user_id=user_id)
+        await self.wizard.goto(scene=MatchScene, director=director)
 
     @on.callback_query(FunctionalCallback.filter(F.back))
     async def exit(self, query: CallbackQuery):
