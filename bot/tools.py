@@ -5,7 +5,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters.callback_data import CallbackData
 
-from settings import Settings
+from config import Settings
 
 
 class FunctionalCallback(CallbackData, prefix="func"):

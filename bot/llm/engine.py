@@ -1,15 +1,11 @@
-from groq import AsyncGroq
-
 from database.models import WizardData
+from llm.client import client, model
 from llm.prompts import start_contest_prompt, pick_winner_prompt
-from settings import Settings
-
-client = AsyncGroq(api_key=Settings().GROQ_API_KEY)
 
 
 async def calculate_manacost(description: str):
     response = await client.chat.completions.create(
-        model="llama3-8b-8192",
+        model=model,
         messages=[
             {'role': "system", 'content': "You are a machine which takes description of a magic spell as an "
                                           "input. As output, you give power of that spell in a single number "
@@ -52,7 +48,7 @@ async def generate_action(messages, wizard_name: str, skill_name: str, descripti
     })
     print(f"{wizard_name} uses {skill_name}. It's description: {description}")
     response = await client.chat.completions.create(
-        model="llama3-8b-8192",
+        model=model,
         messages=messages,
     )
     resp = response.choices[0].message.content
@@ -73,7 +69,7 @@ async def pick_winner(messages, wizards: list[WizardData]) -> int:
 
     })
     response = await client.chat.completions.create(
-        model="llama3-8b-8192",
+        model=model,
         messages=messages,
     )
     resp = response.choices[0].message.content

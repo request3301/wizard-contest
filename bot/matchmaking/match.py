@@ -48,11 +48,14 @@ class Director:
                 builder.button(text=skill.name, callback_data=UseSkillCallback(skill_index=index))
         builder.button(text="Simple attack", callback_data=UseSkillCallback(skill_index=-1).pack())
         builder.adjust(1, True)
-        await bot.send_message(chat_id=self.user_id[self.turn],
-                               text="Choose skill to cast",
-                               reply_markup=builder.as_markup())
-        await bot.send_message(chat_id=self.user_id[self.turn ^ 1],
-                               text="The opponent is choosing skill...")
+        tasks = [
+            bot.send_message(chat_id=self.user_id[self.turn],
+                             text="Choose skill to cast",
+                             reply_markup=builder.as_markup()),
+            bot.send_message(chat_id=self.user_id[self.turn ^ 1],
+                             text="The opponent is choosing skill...")
+        ]
+        await asyncio.gather(*tasks)
 
     async def cast_skill(self, skill_index: int):
         skill = self.skills[self.turn][skill_index]

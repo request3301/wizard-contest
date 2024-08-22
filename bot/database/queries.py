@@ -1,8 +1,8 @@
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
+from config import Settings
 from database.models import *
-from settings import Settings
 
 DATABASE_URL = Settings().DATABASE_URL
 
