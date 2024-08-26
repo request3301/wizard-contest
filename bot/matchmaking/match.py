@@ -38,8 +38,7 @@ class Director:
                 await asyncio.sleep(1)
             self.casted = False
             self.turn = self.turn ^ 1
-        winner = await pick_winner(messages=self.messages, wizards=self.wizards)
-        await self.award_winner(winner)
+        await self.award_winner()
 
     async def send_skill_select_request(self):
         builder = InlineKeyboardBuilder()
@@ -69,15 +68,15 @@ class Director:
             skill_name=skill.name,
             description=skill.description,
         )
-        print(f"groq response:\n{action}")
         await send_messages(*self.user_id, text=action)
         self.casted = True
 
-    async def award_winner(self, winner: int):
-        if winner == 0:
+    async def award_winner(self):
+        winner, is_tie = await pick_winner(messages=self.messages)
+        if is_tie:
             await send_messages(*self.user_id, text="Tie!")
         else:
-            await send_messages(*self.user_id, text=f"The winner is <b>{self.wizards[winner].name}</b>")
+            await send_messages(*self.user_id, text=f"The winner is <b>{winner}</b>")
 
 
 async def create_director(user_ids, wizard_ids) -> Director:
