@@ -7,9 +7,12 @@ from aiogram.fsm.scene import Scene, on
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from database.models import SkillData
 from database.queries import obj_info, get_skills
-from llm.engine import start_contest, generate_action, pick_winner
+from llm.engine import start_contest, generate_action, pick_winner, determine_turn
 from tools import bot, send_messages
+
+TURNS_COUNT = 4
 
 
 class UseSkillCallback(CallbackData, prefix="use_skill"):
@@ -32,12 +35,12 @@ class Director:
         self.used = set()
 
     async def run(self):
-        for _ in range(4):
+        for _ in range(TURNS_COUNT):
             await self.send_skill_select_request()
             while not self.casted:
                 await asyncio.sleep(1)
             self.casted = False
-            self.turn = self.turn ^ 1
+            self.turn = await determine_turn(messages=self.messages, wizards=self.wizards)
         await self.award_winner()
 
     async def send_skill_select_request(self):
@@ -57,8 +60,13 @@ class Director:
         await asyncio.gather(*tasks)
 
     async def cast_skill(self, skill_index: int):
-        skill = self.skills[self.turn][skill_index]
-        self.used.add(skill.id)
+        if skill_index == -1:
+            skill = SkillData(id=-1, name="Simple attack",
+                              description="Just a simple attack. Nothing special about it.",
+                              manacost=0)
+        else:
+            skill = self.skills[self.turn][skill_index]
+            self.used.add(skill.id)
         wizard_name = self.wizards[self.turn].name
         text = f"<b>{wizard_name}</b> casted <b>{skill.name}</b>!"
         await send_messages(*self.user_id, text=text)
