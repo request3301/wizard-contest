@@ -5,16 +5,16 @@ from llm.client import client, model
 
 
 def get_messages(filename: str, schema: bool = False, **replacements):
-    with open(f"bot/llm/prompts/{filename}.json", "r") as f:
-        prompt = f.read()
-    for key, value in replacements.items():
-        prompt = prompt.replace(f"<{key}>", value)
-    messages = json.loads(prompt)
     if schema:
         with open(f"bot/llm/prompts/{filename}_schema.json", "r") as f:
             schema = f.read()
-        for message in messages:
-            message['content'] = message['content'].replace("<schema>", schema)
+        replacements['schema'] = schema
+    with open(f"bot/llm/prompts/{filename}.json", "r") as f:
+        prompt = f.read()
+    messages = json.loads(prompt)
+    for message in messages:
+        for key, value in replacements.items():
+            message['content'] = message['content'].replace(f"<{key}>", value)
     return messages
 
 
