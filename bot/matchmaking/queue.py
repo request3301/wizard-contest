@@ -61,7 +61,7 @@ class Coordinator:
                     for i in [opp, user_id]:
                         self.queue[i]['status'] = "established"
                         self.queue[i]['director'] = director
-                    await director.run()
+                    _ = asyncio.create_task(director.run())
                 opp = 0
 
             await asyncio.sleep(1)
