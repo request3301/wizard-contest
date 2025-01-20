@@ -1,0 +1,11 @@
+groq
+pydantic-settings
+
+# server
+fastapi
+uvicorn[standard]
+
+# communication
+pydantic
+httpx
+wizard-contest-commonlib==0.0.9
