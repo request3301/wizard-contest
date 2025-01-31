@@ -21,10 +21,19 @@ from ..database.orm import SpellType
 from ..database.queries import add_spell
 from ..utils import FunctionalCallback, bot
 
-LLM_URL = 'http://llm:8000'
+
+class _BaseSpellScene(Scene):
+    @on.callback_query(FunctionalCallback.filter(F.back))
+    async def exit(self, query: CallbackQuery) -> None:
+        await bot.send_message(
+            chat_id=query.message.chat.id,
+            text='Cancelled 🚫',
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await self.wizard.goto(scene='WizardInfoScene')
 
 
-class CreateSpellScene(Scene, state='CreateSpellScene'):
+class CreateSpellScene(_BaseSpellScene, state='CreateSpellScene'):
     @on.callback_query.enter()
     async def on_enter(self, query: CallbackQuery, state: FSMContext):
         builder = InlineKeyboardBuilder()
@@ -37,17 +46,8 @@ class CreateSpellScene(Scene, state='CreateSpellScene'):
 
         await self.wizard.goto(EnterSpellNameScene)
 
-    @on.callback_query(FunctionalCallback.filter(F.back))
-    async def exit(self, query: CallbackQuery, state: FSMContext) -> None:
-        """
-        TODO
-        This method should be moved to some kind of upper router, but I don't know how to do this yet.
-        """
-        wizard = await state.get_value('wizard')
-        await self.wizard.goto(scene='WizardInfoScene')
 
-
-class EnterSpellNameScene(Scene, state='EnterSpellNameScene'):
+class EnterSpellNameScene(_BaseSpellScene, state='EnterSpellNameScene'):
     @on.callback_query.enter()
     async def on_enter(self, query: CallbackQuery, state: FSMContext):
         await bot.send_message(chat_id=query.from_user.id, text="Enter spell's name")
@@ -58,16 +58,8 @@ class EnterSpellNameScene(Scene, state='EnterSpellNameScene'):
 
         await self.wizard.goto(EnterSpellTypeScene)
 
-    @on.callback_query(FunctionalCallback.filter(F.back))
-    async def exit(self, query: CallbackQuery, state: FSMContext) -> None:
-        """
-        TODO
-        This method should be moved to some kind of upper router, but I don't know how to do this yet.
-        """
-        await self.wizard.goto(scene='WizardInfoScene')
 
-
-class EnterSpellTypeScene(Scene, state='EnterSpellTypeScene'):
+class EnterSpellTypeScene(_BaseSpellScene, state='EnterSpellTypeScene'):
     @on.message.enter()
     async def on_enter(self, message: Message, state: FSMContext):
         markup = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='Active'), KeyboardButton(text='Passive')]])
@@ -87,16 +79,8 @@ class EnterSpellTypeScene(Scene, state='EnterSpellTypeScene'):
 
         await self.wizard.goto(EnterSpellDescriptionScene)
 
-    @on.callback_query(FunctionalCallback.filter(F.back))
-    async def exit(self, query: CallbackQuery, state: FSMContext) -> None:
-        """
-        TODO
-        This method should be moved to some kind of upper router, but I don't know how to do this yet.
-        """
-        await self.wizard.goto(scene='WizardInfoScene')
 
-
-class EnterSpellDescriptionScene(Scene, state='EnterSpellDescriptionScene'):
+class EnterSpellDescriptionScene(_BaseSpellScene, state='EnterSpellDescriptionScene'):
     @on.message.enter()
     async def on_enter(self, message: Message, state: FSMContext):
         await message.answer(
@@ -137,11 +121,3 @@ class EnterSpellDescriptionScene(Scene, state='EnterSpellDescriptionScene'):
             }
             response = await client.get(settings.LLM_SERVICE_URL + '/spell/calculate_manacost', params=query)
             return int(response.text)
-
-    @on.callback_query(FunctionalCallback.filter(F.back))
-    async def exit(self, query: CallbackQuery, state: FSMContext) -> None:
-        """
-        TODO
-        This method should be moved to some kind of upper router, but I don't know how to do this yet.
-        """
-        await self.wizard.goto(scene='WizardInfoScene')

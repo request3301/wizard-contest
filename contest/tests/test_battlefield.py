@@ -39,7 +39,7 @@ async def test_start_contest(httpx_mock, battlefield):
 async def test_get_turn(httpx_mock, battlefield):
     httpx_mock.add_response(text="0")
 
-    turn_user_id = await battlefield.get_turn()
+    turn_user_id = await battlefield.get_user_to_make_turn()
     assert turn_user_id == 3
 
 

@@ -5,7 +5,7 @@ from .config import settings
 
 client = AsyncGroq(api_key=settings.GROQ_API_KEY)
 
-model = 'llama-3.1-70b-versatile'
+model = 'llama-3.3-70b-versatile'
 
 
 async def generate_response(messages: list[Message], **kwargs) -> str:

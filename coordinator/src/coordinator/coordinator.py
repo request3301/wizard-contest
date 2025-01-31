@@ -101,7 +101,7 @@ class LobbyManager:
     @staticmethod
     async def _create_director() -> int:
         async with httpx.AsyncClient() as client:
-            response = await client.post(CONTEST_URL + '/director/create')
+            response = await client.post(CONTEST_URL + '/create_director')
             return int(response.text)
 
 

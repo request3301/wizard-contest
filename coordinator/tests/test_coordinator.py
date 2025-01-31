@@ -96,7 +96,7 @@ class TestLobbyManager:
         requests = [asyncio.create_task(lobby_manager.user_ready_in_lobby(user_id)) for user_id in player_pair.user_id]
         await asyncio.sleep(0)
 
-        httpx_mock.add_response(url=CONTEST_URL + '/contest/director/create', text=f'{expected_director_id}')
+        httpx_mock.add_response(url=CONTEST_URL + '/contest/create_director', text=f'{expected_director_id}')
         await lobby_manager.process_lobbies()
 
         assert len(lobby_manager.lobbies) == 0
@@ -141,7 +141,7 @@ class TestCoordinator:
         await join_task_2
 
         expected_director_id = 42
-        httpx_mock.add_response(url=CONTEST_URL + '/contest/director/create', text=f'{expected_director_id}')
+        httpx_mock.add_response(url=CONTEST_URL + '/contest/create_director', text=f'{expected_director_id}')
 
         ready_task_1 = asyncio.create_task(coordinator.lobby_manager.user_ready_in_lobby(user_id=1))
         ready_task_2 = asyncio.create_task(coordinator.lobby_manager.user_ready_in_lobby(user_id=2))

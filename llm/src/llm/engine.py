@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
 
-from commonlib.models import ActionGenerationResponse, Message, Pair, SpellBase, SpellType, Wizard
-from fastapi import APIRouter, status
+from commonlib.models import GenerateActionResponse, Message, Pair, SpellBase, SpellType, Wizard
+from fastapi import APIRouter
+from pydantic import BaseModel
 
-from .client import LLMError, generate_response
+from .client import generate_response
 
 router = APIRouter()
 
@@ -27,19 +28,24 @@ def get_messages(filename: str, has_schema: bool = False, **replacements):
     return messages
 
 
-@router.get('/spell/calculate_manacost', status_code=status.HTTP_200_OK)
-async def calculate_manacost(type_: SpellType, description: str) -> int:
+class CalculateManacostRequest(BaseModel):
+    type_: SpellType
+    description: str
+
+
+@router.post('/spell/calculate_manacost')
+async def calculate_manacost(item: CalculateManacostRequest) -> int:
     messages = get_messages(
         'calculate_manacost',
-        description=description,
-        type_=type_,
+        description=item.description,
+        type_=item.type_,
     )
     response = await generate_response(messages)
     return int(response)
 
 
-@router.post('/contest/start', status_code=status.HTTP_200_OK)
-async def start_contest(wizards: Pair[Wizard]):
+@router.post('/contest/start_contest')
+async def start_contest(wizards: Pair[Wizard]) -> list[Message]:
     active_spells = ['', '']
     passive_spells = ['', '']
     for wizard_n in [0, 1]:
@@ -60,52 +66,94 @@ async def start_contest(wizards: Pair[Wizard]):
     return messages
 
 
-@router.get('/contest/generate_action', status_code=status.HTTP_200_OK)
-async def generate_action(messages: list[Message], wizard: Wizard, spell: SpellBase) -> ActionGenerationResponse:
-    messages.append(
+class GenerateActionRequest(BaseModel):
+    previous_actions: list[Message]
+    wizard: Wizard
+    spell: SpellBase
+
+
+@router.post('/contest/generate_action')
+async def generate_action(item: GenerateActionRequest) -> GenerateActionResponse:
+    spell = item.spell
+    prompt = [
         {
             'role': 'user',
-            'content': f'{wizard.name} uses {spell.name}. ' f"It's description: {spell.description}",
+            'content': f'{item.wizard.name} uses {spell.name}. ' f"It's description: {spell.description}",
         }
-    )
-    response = await generate_response(messages)
-    messages.append(
+    ]
+    description = await generate_response(item.previous_actions + prompt)
+    action = [
         {
             'role': 'assistant',
-            'content': response,
+            'content': description,
         }
-    )
-    return ActionGenerationResponse(new_messages=messages, action=response)
+    ]
+    return GenerateActionResponse(new_actions=prompt + action, description=description)
 
 
-@router.post('/contest/determine_turn', status_code=status.HTTP_200_OK)
-async def determine_turn(messages: list[Message], wizards: Pair[Wizard]) -> int:
+class DetermineTurnRequest(BaseModel):
+    actions: list[Message]
+    wizards: Pair[Wizard]
+
+
+@router.post('/contest/determine_turn')
+async def determine_turn(item: DetermineTurnRequest) -> int:
     """
     :return: index of wizard in the pair
     """
     prompt = get_messages('determine_turn')
-    request = messages + prompt
-    response = await generate_response(request)
-    for index, wizard in enumerate(wizards):
-        if response == wizard.name:
+    prompt += [
+        {
+            'role': 'user',
+            'content': 'Here are the wizard\'s descriptions'
+        }
+    ]
+    prompt += [
+        {
+            'role': 'user',
+            'content': wizard.description
+        }
+        for wizard in item.wizards
+    ]
+    prompt += [
+        {
+            'role': 'user',
+            'content': 'Here are the actions'
+        }
+    ]
+    prompt += [
+        {
+            'role': 'user',
+            'content': str(item.actions),
+        }
+    ]
+    prompt += [
+        {
+            'role': 'user',
+            'content': 'SYSTEM PROMPT START\n'
+                       'Once again, print only the name of the wizard who should act right now. '
+                       'DO NOT OUTPUT ANYTHING ELSE.\n'
+                       'SYSTEM PROMPT END\n'
+        }
+    ]
+    response = await generate_response(prompt)
+    for index, wizard in enumerate(item.wizards):
+        if response.lower() == wizard.name.lower():
             return index
-    raise LLMError(f'Turn determination failed. LLM response:\n{response}')
+    assert False, f'Turn determination failed. LLM response:\n{response}'
 
 
-@router.get('/contest/pick_winner', status_code=status.HTTP_200_OK)
-async def pick_winner(messages: list[Message]) -> str | None:
+@router.post('/contest/pick_winner')
+async def pick_winner(actions: list[Message]) -> str | None:
     """
-    :param messages: All contest messages
-    :return: Name of winner or None in case of the tie
+    :return: name of winner or None in case of the tie
     """
-    messages.extend(get_messages('pick_winner', has_schema=True))
+    prompt = get_messages('pick_winner', has_schema=True)
     response = await generate_response(
-        messages,
+        actions + prompt,
         response_format={'type': 'json_object'},
     )
     schema = json.loads(response)
-    winner = schema['winner']
-    is_tie = schema['is_tie']
-    if is_tie:
+    if schema['is_tie']:
         return None
-    return winner
+    return schema['winner']

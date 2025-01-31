@@ -1,9 +1,9 @@
-import httpx
-from commonlib.models import ActionGenerationResponse, ContestResult, Message, Pair, Spell, SpellBase, SpellType, Wizard
+from commonlib.models import ContestResult, Message, Pair, Spell, SpellBase, SpellType, Wizard
+from commonlib.services.llm import LLMClient
 
 from .config import settings
 
-API_ENDPOINT = settings.LLM_SERVICE_URL + '/contest'
+llm_client = LLMClient(settings.LLM_SERVICE_URL)
 
 DUMMY_SPELL = Spell(
     id=-1,
@@ -18,30 +18,27 @@ class Battlefield:
     def __init__(self):
         self._wizards: dict[int, Wizard] = {}
         self._used_spells: set[int] = set()
-        self._messages: list[Message] | None = None
+        self._actions: list[Message] = []
 
     def set_wizard(self, user_id: int, wizard: Wizard):
         self._wizards[user_id] = wizard
 
     async def start_contest(self):
         wizards = Pair(self._wizards.values())
-        async with httpx.AsyncClient() as client:
-            await client.post(API_ENDPOINT + '/start', json=wizards.model_dump())
+        await llm_client.start_contest(wizards)
 
-    async def get_turn(self) -> int:
+    async def get_user_to_make_turn(self) -> int:
         """
         Determines the player that should act this turn based on happened events
         :return: user_id of player that should play this turn.
         """
-        async with httpx.AsyncClient() as client:
-            wizards = Pair(self._wizards.values())
-            query = {
-                'messages': self._messages,
-                'wizards': wizards.model_dump(),
-            }
-            response = await client.post(API_ENDPOINT + '/determine_turn', json=query)
+        wizards = Pair(self._wizards.values())
+        wizard_index = await llm_client.determine_turn(
+            actions=self._actions,
+            wizards=wizards.model_dump(),
+        )
         for user_id, wizard in self._wizards.items():
-            if wizard.id == wizards[int(response.text)].id:
+            if wizard.id == wizards[wizard_index].id:
                 return user_id
         assert False
 
@@ -67,30 +64,22 @@ class Battlefield:
         return action
 
     async def get_winner(self) -> ContestResult:
-        async with httpx.AsyncClient() as client:
-            query = {
-                'messages': self._messages,
-            }
-            response = await client.get(API_ENDPOINT + '/pick_winner', params=query)
-            if not response.text:
-                return ContestResult(tie=True)
-            wizard_name = response.text
-            for wizard in self._wizards.values():
-                if wizard.name == wizard_name:
-                    return ContestResult(winner=wizard)
-            raise ValueError(f'No wizard named {wizard_name}')
+        winner_name = await llm_client.pick_winner(self._actions)
+        if winner_name is None:
+            return ContestResult(tie=True)
+        for wizard in self._wizards.values():
+            if wizard.name == winner_name:
+                return ContestResult(winner=wizard)
+        raise ValueError(f'No wizard named {winner_name}')
 
     async def _generate_action(self, wizard: Wizard, spell: SpellBase) -> str:
-        async with httpx.AsyncClient() as client:
-            query = {
-                'messages': self._messages,
-                'wizard': wizard,
-                'spell': spell.model_dump(),
-            }
-            response = await client.get(API_ENDPOINT + '/start', params=query)
-            action_generation_response = ActionGenerationResponse.model_validate(response.json())
-            self._messages = action_generation_response.new_messages
-            return action_generation_response.action
+        response = await llm_client.generate_action(
+            previous_actions=self._actions,
+            wizard=wizard.model_dump(),
+            spell=SpellBase(**spell.model_dump()).model_dump(),
+        )
+        self._actions += response.new_actions
+        return response.description
 
     @staticmethod
     def _find_spell(wizard: Wizard, spell_id: int) -> Spell:

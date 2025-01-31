@@ -7,7 +7,6 @@ def test_wizard_1() -> Wizard:
     return Wizard(
         id=3,
         name="Merlin",
-        description="Powerful wizard",
         speed=1,
         power=4,
         spells=[
@@ -24,7 +23,6 @@ def test_wizard_2() -> Wizard:
         speed=3,
         power=3,
         name="Gandalf",
-        description="Grey wizard",
         spells=[
             Spell(id=3, type_=SpellType.ACTIVE, name="Lightning", description="Summons lightning", manacost=5),
             Spell(id=4, type_=SpellType.ACTIVE, name="Shield", description="Creates shield", manacost=2),

@@ -1,7 +1,8 @@
+import asyncio
 import uuid
 
 from commonlib.models import ContestAction, Wizard
-from fastapi import APIRouter, status
+from fastapi import APIRouter
 
 from .director import Director
 
@@ -10,38 +11,35 @@ router = APIRouter()
 directors: dict[int, Director] = {}
 
 
-@router.post('/director/create', status_code=status.HTTP_201_CREATED)
+@router.post('/create_director')
 async def create_director() -> int:
     director_id = uuid.uuid4().int
     directors[director_id] = Director()
     return director_id
 
 
-@router.post('/director/{director_id}/user/{user_id}/wizard/set', status_code=status.HTTP_201_CREATED)
-async def set_wizard_for_player(director_id: int, user_id: int, wizard: Wizard) -> None:
-    await directors[director_id].set_wizard(user_id, wizard)
+@router.post('/set_wizard')
+async def set_wizard(director_id: int, user_id: int, wizard: Wizard) -> None:
+    director = directors[director_id]
+    await director.set_wizard(user_id, wizard)
+    # here response is returned only when everyone have set their wizard
 
 
-@router.get('/director/{director_id}/get_turn', status_code=status.HTTP_200_OK)
+@router.post('/get_user_to_make_turn')
 async def get_user_to_make_turn(director_id: int) -> int:
     return await directors[director_id].get_user_to_make_turn()
 
 
-@router.get('/director/{director_id}/get_available_spells/{user_id}', status_code=status.HTTP_200_OK)
+@router.post('/get_available_spells')
 async def get_available_spells(director_id: int, user_id: int) -> list[int]:
     return await directors[director_id].get_available_spells(user_id)
 
 
-@router.post('/director/{director_id}/user/{user_id}/cast/{spell_id}', status_code=status.HTTP_200_OK)
+@router.post('/cast_spell')
 async def cast_spell(director_id: int, user_id: int, spell_id: int) -> None:
-    await directors[director_id].make_turn(user_id, spell_id)
+    asyncio.create_task(directors[director_id].cast_spell(user_id, spell_id))
 
 
-@router.get('/director/{director_id}/action', status_code=status.HTTP_200_OK)
+@router.post('/get_action')
 async def get_action(director_id: int) -> ContestAction:
-    director = directors[director_id]
-    return ContestAction(
-        action=director.action,
-        metadata=director.action_metadata,
-        result=director.result,
-    )
+    return await directors[director_id].get_contest_action()

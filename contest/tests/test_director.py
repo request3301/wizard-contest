@@ -50,7 +50,7 @@ async def test_match_flow(httpx_mock, director, test_wizard_1, test_wizard_2):
     assert user_id == 3
 
     # Make turn
-    await director.make_turn(3, 1)
+    await director.cast_spell(3, 1)
     assert director.action == "Merlin casts Fireball!"
     assert isinstance(director.action_metadata, ActionMetadata)
     assert director.action_metadata.caster_wizard == test_wizard_1
@@ -89,7 +89,7 @@ async def test_match_completion(httpx_mock, director, test_wizard_1, test_wizard
 
     for _ in range(settings.TURNS_COUNT):
         user_id = await director.get_user_to_make_turn()
-        await director.make_turn(user_id, -1)
+        await director.cast_spell(user_id, -1)
 
     assert isinstance(director.result, ContestResult)
     assert director.result.winner == test_wizard_1
@@ -114,6 +114,6 @@ async def test_tie_result(httpx_mock, director, test_wizard_1, test_wizard_2):
 
     for _ in range(settings.TURNS_COUNT):
         user_id = await director.get_user_to_make_turn()
-        await director.make_turn(user_id, -1)
+        await director.cast_spell(user_id, -1)
 
     assert director.result.tie is True
